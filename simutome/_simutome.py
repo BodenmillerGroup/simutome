@@ -11,10 +11,10 @@ class Simutome:
         displacement_var_x: float
         displacement_var_y: float
 
-    class CellSplitParams(NamedTuple):
-        split_probab: float
-        split_dist_mean: float
-        split_dist_std: float
+    class CellSplitingParams(NamedTuple):
+        splitting_probab: float
+        splitting_dist_mean: float
+        splitting_dist_std: float
 
     CellDataTransform = Callable[[np.ndarray, np.random.Generator], np.ndarray]
 
@@ -32,7 +32,7 @@ class Simutome:
         cell_exclusion_probab: Optional[float] = None,
         cell_displacement_params: Optional[CellDisplacementParams] = None,
         cell_data_permutation_probab: Optional[float] = None,
-        cell_split_params: Optional[CellSplitParams] = None,
+        cell_splitting_params: Optional[CellSplitingParams] = None,
         cell_data_transform: Optional[CellDataTransform] = None,
         img_transform_params: Optional[ImageTransformParams] = None,
         shuffle: bool = True,
@@ -42,7 +42,7 @@ class Simutome:
         self.cell_exclusion_probab = cell_exclusion_probab
         self.cell_displacement_params = cell_displacement_params
         self.cell_data_permuation_probab = cell_data_permutation_probab
-        self.cell_split_params = cell_split_params
+        self.cell_splitting_params = cell_splitting_params
         self.cell_data_transform = cell_data_transform
         self.img_transform_params = img_transform_params
         self.shuffle = shuffle
@@ -50,62 +50,64 @@ class Simutome:
 
     def generate_sections(
         self,
-        pos: np.ndarray,
         data: np.ndarray,
+        coords: np.ndarray,
         orig_width: int,
         orig_height: int,
         n: Optional[int] = None,
     ) -> Generator[Tuple[np.ndarray, np.ndarray, np.ndarray], None, None]:
         i = 0
         while n is None or i < n:
-            yield self.generate_section(pos, data, orig_width, orig_height)
+            yield self.generate_section(data, coords, orig_width, orig_height)
             i += 1
 
     def generate_section(
         self,
-        pos: np.ndarray,
         data: np.ndarray,
+        coords: np.ndarray,
         clusters: np.ndarray,
         orig_img_width: int,
         orig_img_height: int,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        orig_ind = np.arange(len(pos))
+        orig_ind = np.arange(len(data))
         if self.img_occlusion_frac is not None:
             occlusion_mask = self._occlude_image(
-                pos, orig_img_width, orig_img_height
+                coords, orig_img_width, orig_img_height
             )
-            pos = pos[occlusion_mask]
+            coords = coords[occlusion_mask]
             data = data[occlusion_mask]
             clusters = clusters[occlusion_mask]
             orig_ind = orig_ind[occlusion_mask]
         if self.cell_exclusion_probab is not None:
-            exclusion_mask = self._exclude_cells(len(pos))
-            pos = pos[exclusion_mask]
+            exclusion_mask = self._exclude_cells(len(coords))
+            coords = coords[exclusion_mask]
             data = data[exclusion_mask]
             clusters = clusters[exclusion_mask]
             orig_ind = orig_ind[exclusion_mask]
         if self.cell_displacement_params is not None:
-            pos = self._displace_cells(pos)
+            coords = self._displace_cells(coords)
         if self.cell_data_permuation_probab is not None:
             data = self._permute_cell_data(data, clusters)
-        if self.cell_split_params is not None:
-            pos, data, clusters, orig_ind = self._split_cells(
-                pos, data, clusters, orig_ind
+        if self.cell_splitting_params is not None:
+            data, coords, clusters, orig_ind = self._split_cells(
+                data, coords, clusters, orig_ind
             )
         if self.cell_data_transform is not None:
             data = self.cell_data_transform(data, self._rng)
         if self.img_transform_params is not None:
-            pos = self._transform_image(pos, orig_img_width, orig_img_height)
+            coords = self._transform_image(
+                coords, orig_img_width, orig_img_height
+            )
         if self.shuffle:
-            shuffled_ind = self._rng.permutation(len(pos))
-            pos = pos[shuffled_ind]
+            shuffled_ind = self._rng.permutation(len(coords))
+            coords = coords[shuffled_ind]
             data = data[shuffled_ind]
             orig_ind = orig_ind[shuffled_ind]
-        return pos, data, orig_ind
+        return data, coords, orig_ind
 
     def _occlude_image(
         self,
-        pos: np.ndarray,
+        coords: np.ndarray,
         orig_img_width: int,
         orig_img_height: int,
     ) -> np.array:
@@ -114,14 +116,14 @@ class Simutome:
         x0 = self._rng.integers(orig_img_width - w)
         y0 = self._rng.integers(orig_img_height - h)
         return (
-            (pos[:, 0] >= x0)
-            & (pos[:, 0] < x0 + w)
-            & (pos[:, 1] >= y0)
-            & (pos[:, 1] < y0 + h)
+            (coords[:, 0] >= x0)
+            & (coords[:, 0] < x0 + w)
+            & (coords[:, 1] >= y0)
+            & (coords[:, 1] < y0 + h)
         )
 
     def _transform_image(
-        self, pos: np.ndarray, orig_img_width: int, orig_img_height: int
+        self, coords: np.ndarray, orig_img_width: int, orig_img_height: int
     ) -> np.ndarray:
         center_transform = AffineTransform(
             translation=(-orig_img_width / 2.0, -orig_img_height / 2.0)
@@ -138,7 +140,7 @@ class Simutome:
                 self.img_transform_params.translation_y,
             ),
         )
-        return center_transform.inverse(transform(center_transform(pos)))
+        return center_transform.inverse(transform(center_transform(coords)))
 
     def _exclude_cells(self, num_cells: int) -> np.ndarray:
         return self._rng.choice(
@@ -147,7 +149,7 @@ class Simutome:
             p=[self.cell_exclusion_probab, 1.0 - self.cell_exclusion_probab],
         )
 
-    def _displace_cells(self, pos: np.ndarray) -> np.ndarray:
+    def _displace_cells(self, coords: np.ndarray) -> np.ndarray:
         mean = [
             self.cell_displacement_params.displacement_mean_x,
             self.cell_displacement_params.displacement_mean_y,
@@ -156,7 +158,9 @@ class Simutome:
             self.cell_displacement_params.displacement_var_x,
             self.cell_displacement_params.displacement_var_y,
         ]
-        return pos + self._rng.multivariate_normal(mean, cov, size=len(pos))
+        return coords + self._rng.multivariate_normal(
+            mean, cov, size=len(coords)
+        )
 
     def _permute_cell_data(
         self, data: np.ndarray, clusters: np.ndarray
@@ -175,28 +179,28 @@ class Simutome:
 
     def _split_cells(
         self,
-        pos: np.ndarray,
         data: np.ndarray,
+        coords: np.ndarray,
         clusters: np.ndarray,
         orig_ind: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         m = self._rng.choice(
             [True, False],
-            size=len(pos),
+            size=len(coords),
             p=[
-                self.cell_split_params.split_probab,
-                1.0 - self.cell_split_params.split_probab,
+                self.cell_splitting_params.splitting_probab,
+                1.0 - self.cell_splitting_params.splitting_probab,
             ],
         )
         r = self._rng.uniform(low=0.0, high=np.pi, size=np.sum(m))
         d = self._rng.normal(
-            loc=self.cell_split_params.split_dist_mean,
-            scale=self.cell_split_params.split_dist_std,
+            loc=self.cell_splitting_params.splitting_dist_mean,
+            scale=self.cell_splitting_params.splitting_dist_std,
             size=np.sum(m),
         )
         delta = d * np.column_stack((np.cos(r), np.sin(r)))
-        pos = np.concatenate(pos[~m], pos[m] + delta, pos[m] - delta)
+        coords = np.concatenate(coords[~m], coords[m] + delta, coords[m] - delta)
         data = np.concatenate(data[~m], data[m], data[m])
         clusters = np.concatenate(clusters[~m], clusters[m], clusters[m])
         orig_ind = np.concatenate(orig_ind[~m], orig_ind[m], orig_ind[m])
-        return pos, data, clusters, orig_ind
+        return data, coords, clusters, orig_ind
