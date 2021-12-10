@@ -61,8 +61,9 @@ class CellMaskSlicer:
         cell_slice_centroid_y_um: float
         cell_slice_centroid_z_um: float
         proj_cell_slice_area_um2: float
-        proj_cell_slice_centroid_x_um: float
-        proj_cell_slice_centroid_y_um: float
+        proj_cell_slice_centroid_x_um: float  # NaN for sectioning_axis == 2
+        proj_cell_slice_centroid_y_um: float  # NaN for sectioning_axis == 1
+        proj_cell_slice_centroid_z_um: float  # NaN for sectioning_axis == 0
 
     def __init__(
         self,
@@ -178,7 +179,7 @@ class CellMaskSlicer:
                         cell_id = props.label
                         cell_slice_number = num_cell_slices.get(cell_id, 0)
                         cell_slice_volume_um3 = props.area * voxel_volume_um3
-                        cell_slice_centroid_um = (
+                        cell_slice_centroid_um = list(
                             props.centroid * self._voxel_size_um
                         )
                         cell_slice_centroid_um[
@@ -189,8 +190,11 @@ class CellMaskSlicer:
                         proj_cell_slice_area_um2 = (
                             proj_props.area * pixel_area_um2
                         )
-                        proj_cell_slice_centroid_um = (
+                        proj_cell_slice_centroid_um = list(
                             proj_props.centroid * pixel_size_um
+                        )
+                        proj_cell_slice_centroid_um.insert(
+                            sectioning_axis, float("nan")
                         )
                         cell_slice_info = CellMaskSlicer.CellSliceInfo(
                             sectioning_axis,
@@ -205,6 +209,7 @@ class CellMaskSlicer:
                             proj_cell_slice_area_um2,
                             proj_cell_slice_centroid_um[-1],
                             proj_cell_slice_centroid_um[-2],
+                            proj_cell_slice_centroid_um[-3],
                         )
                         cell_slice_infos.append(cell_slice_info)
                         num_cell_slices[cell_id] = cell_slice_number + 1
