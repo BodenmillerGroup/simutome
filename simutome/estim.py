@@ -1,80 +1,37 @@
+import itertools
 import numpy as np
 import pandas as pd
 
-from itertools import product
 from skimage.measure import regionprops
 from tqdm.auto import tqdm
-from typing import Generator, List, NamedTuple, Tuple
+from typing import Generator, Optional, Sequence, Tuple
 
 
-def measure_cell_mask(
-    cell_mask: np.ndarray,
-    voxel_size_um: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-) -> pd.DataFrame:
-    props_list = regionprops(cell_mask)
-    return pd.DataFrame(
-        data={
-            "cell_id": [props.label for props in props_list],
-            "cell_volume_um3": [
-                p.area * np.prod(voxel_size_um) for p in props_list
-            ],
-            "cell_centroid_x_um": [
-                props.centroid[-1] * voxel_size_um[-1] for props in props_list
-            ],
-            "cell_centroid_y_um": [
-                props.centroid[-2] * voxel_size_um[-2] for props in props_list
-            ],
-            "cell_centroid_z_um": [
-                props.centroid[-3] * voxel_size_um[-3] for props in props_list
-            ],
-            "proj_cell_area_x_um2": [
-                np.sum(np.amax(props.image, axis=-1))
-                * np.prod(voxel_size_um)
-                / voxel_size_um[-1]
-                for props in props_list
-            ],
-            "proj_cell_area_y_um2": [
-                np.sum(np.amax(props.image, axis=-2))
-                * np.prod(voxel_size_um)
-                / voxel_size_um[-2]
-                for props in props_list
-            ],
-            "proj_cell_area_z_um2": [
-                np.sum(np.amax(props.image, axis=-3))
-                * np.prod(voxel_size_um)
-                / voxel_size_um[-3]
-                for props in props_list
-            ],
-        }
-    )
-
-
-class CellMaskSlicer:
-    class CellSliceInfo(NamedTuple):
-        sectioning_axis: int
-        section_thickness_um: float
-        section_offset_um: float
-        cell_id: int
-        cell_slice_number: int
-        cell_slice_volume_um3: float
-        cell_slice_centroid_x_um: float
-        cell_slice_centroid_y_um: float
-        cell_slice_centroid_z_um: float
-        proj_cell_slice_area_um2: float
-        proj_cell_slice_centroid_x_um: float  # NaN for sectioning_axis == 2
-        proj_cell_slice_centroid_y_um: float  # NaN for sectioning_axis == 1
-        proj_cell_slice_centroid_z_um: float  # NaN for sectioning_axis == 0
-
+class CellSlicer:
     def __init__(
         self,
-        cell_mask: np.ndarray,
+        mask: np.ndarray,
+        intensities: Optional[np.ndarray] = None,
+        channel_names: Optional[Sequence[str]] = None,
         voxel_size_um: Tuple[float, float, float] = (1.0, 1.0, 1.0),
     ) -> None:
-        if cell_mask.ndim != 3:
+        if mask.ndim != 3:
             raise ValueError("mask")
+        if intensities is not None and (
+            intensities.ndim != 4
+            or intensities.shape[0] != mask.shape[0]
+            or intensities.shape[2:] != mask.shape[1:]
+        ):
+            raise ValueError("intensities")
+        if intensities is not None and (
+            channel_names is None or len(channel_names) != intensities.shape[1]
+        ):
+            raise ValueError("channel_names")
         if len(voxel_size_um) != 3:
             raise ValueError("voxel_size_um")
-        self._cell_mask = np.asarray(cell_mask)
+        self._mask = mask
+        self._intensities = intensities
+        self._channel_names = channel_names
         self._voxel_size_um = np.asarray(voxel_size_um)
 
     def get_section_count(
@@ -85,7 +42,7 @@ class CellMaskSlicer:
         drop_last: bool = True,
     ) -> int:
         section_count = (
-            self._cell_mask.shape[sectioning_axis]
+            self._mask.shape[sectioning_axis]
             * self.voxel_size_um[sectioning_axis]
             - section_offset_um
         ) / section_thickness_um
@@ -101,7 +58,7 @@ class CellMaskSlicer:
         section_thickness_um: float,
         section_offset_um: float = 0.0,
         drop_last: bool = True,
-    ) -> Generator[np.ndarray, None, None]:
+    ) -> Generator[Tuple[np.ndarray, Optional[np.ndarray]], None, None]:
         if sectioning_axis not in (0, 1, 2):
             raise ValueError("sectioning_axis")
         if section_thickness_um <= 0.0 or np.any(
@@ -110,27 +67,127 @@ class CellMaskSlicer:
             raise ValueError("section_thickness_um")
         if section_offset_um < 0.0:
             raise ValueError("section_offset_um")
+        mask = np.moveaxis(self._mask, sectioning_axis, 0)
+        if self._intensities is not None:
+            intensities = np.moveaxis(
+                self._intensities, sectioning_axis + (sectioning_axis > 0), 0
+            )
+        else:
+            intensities = None
         pixel_size_um = self._voxel_size_um[sectioning_axis]
-        cell_mask = np.moveaxis(self._cell_mask, sectioning_axis, 0)
         section_thickness_px = int(round(section_thickness_um / pixel_size_um))
         for section_start_um in np.arange(
             section_offset_um,
-            cell_mask.shape[0] * pixel_size_um,
+            mask.shape[0] * pixel_size_um,
             section_thickness_um,
         ):
             section_start_px = int(round(section_start_um / pixel_size_um))
             section_stop_px = section_start_px + section_thickness_px
-            if section_stop_px <= cell_mask.shape[0] or not drop_last:
-                section = cell_mask[section_start_px:section_stop_px]
-                yield np.moveaxis(section, 0, sectioning_axis)
+            if section_stop_px <= mask.shape[0] or not drop_last:
+                mask_section = np.moveaxis(
+                    mask[section_start_px:section_stop_px], 0, sectioning_axis
+                )
+                if intensities is not None:
+                    intensities_section = np.moveaxis(
+                        intensities[section_start_px:section_stop_px],
+                        0,
+                        sectioning_axis + (sectioning_axis > 0),
+                    )
+                else:
+                    intensities_section = None
+                yield mask_section, intensities_section
 
-    def run(
+    def measure_cells(
         self,
-        sectioning_axes: List[int],
-        section_thicknesses_um: List[float],
+        sectioning_axes: Sequence[int],
+        progress: bool = False,
+    ) -> pd.DataFrame:
+        if any(a not in (0, 1, 2) for a in sectioning_axes):
+            raise ValueError("sectioning_axes")
+        cell_infos = []
+        voxel_volume_um3 = np.prod(self._voxel_size_um)
+        cell_props_list = regionprops(
+            self._mask,
+            intensity_image=(
+                np.moveaxis(self._intensities, 1, -1)
+                if self._intensities is not None
+                else None
+            ),
+        )
+        if progress:
+            pbar = tqdm(total=len(sectioning_axes) * len(cell_props_list))
+        for sectioning_axis in sectioning_axes:
+            pixel_size_um = np.delete(self._voxel_size_um, sectioning_axis)
+            pixel_area_um2 = np.prod(pixel_size_um)
+            for cell_props in cell_props_list:
+                cell_id = cell_props.label
+                cell_volume_um3 = cell_props.area * voxel_volume_um3
+                cell_centroid_um = cell_props.centroid * np.array(
+                    self._voxel_size_um
+                )
+                proj_cell_props = regionprops(
+                    np.amax(cell_props.image, axis=sectioning_axis).astype(
+                        np.uint8
+                    ),
+                    intensity_image=np.sum(
+                        cell_props.image_intensity, axis=sectioning_axis
+                    ),
+                )[0]
+                proj_cell_area_um2 = proj_cell_props.area * pixel_area_um2
+                proj_cell_centroid_um = list(
+                    proj_cell_props.centroid * pixel_size_um
+                )
+                proj_cell_centroid_um.insert(sectioning_axis, float("nan"))
+                cell_info = [
+                    sectioning_axis,
+                    cell_id,
+                    cell_volume_um3,
+                    cell_centroid_um[-1],
+                    cell_centroid_um[-2],
+                    cell_centroid_um[-3],
+                    proj_cell_area_um2,
+                    proj_cell_centroid_um[-1],
+                    proj_cell_centroid_um[-2],
+                    proj_cell_centroid_um[-3],
+                ]
+                if self._intensities is not None:
+                    cell_info += cell_props.intensity_mean.tolist()
+                    cell_info += proj_cell_props.intensity_mean.tolist()
+                cell_infos.append(cell_info)
+                if progress:
+                    pbar.update()
+        if progress:
+            pbar.close()
+        columns = [
+            "sectioning_axis",
+            "cell_id",
+            "cell_volume_um3",
+            "cell_centroid_x_um",
+            "cell_centroid_y_um",
+            "cell_centroid_z_um",
+            "proj_cell_area_um2",
+            "proj_cell_centroid_x_um",
+            "proj_cell_centroid_y_um",
+            "proj_cell_centroid_z_um",
+        ]
+        if self._intensities is not None:
+            columns += [
+                f"mean_cell_intensity_{channel_name}"
+                for channel_name in self._channel_names
+            ]
+            columns += [
+                f"mean_proj_cell_intensity_{channel_name}"
+                for channel_name in self._channel_names
+            ]
+        return pd.DataFrame(data=cell_infos, columns=columns, copy=False)
+
+    def measure_cell_slices(
+        self,
+        sectioning_axes: Sequence[int],
+        section_thicknesses_um: Sequence[float],
         drop_last: bool = True,
         progress: bool = False,
-    ) -> List[CellSliceInfo]:
+    ) -> pd.DataFrame:
         if any(a not in (0, 1, 2) for a in sectioning_axes):
             raise ValueError("sectioning_axes")
         if any(
@@ -141,8 +198,7 @@ class CellMaskSlicer:
         cell_slice_infos = []
         voxel_volume_um3 = np.prod(self._voxel_size_um)
         if progress:
-            progress_bar = tqdm(
-                desc="Sections",
+            pbar = tqdm(
                 total=sum(
                     self.get_section_count(
                         sectioning_axis,
@@ -150,15 +206,14 @@ class CellMaskSlicer:
                         section_offset_um=section_offset_um,
                         drop_last=drop_last,
                     )
-                    for sectioning_axis, section_thickness_um in product(
-                        sectioning_axes, section_thicknesses_um
-                    )
+                    for sectioning_axis in sectioning_axes
+                    for section_thickness_um in section_thicknesses_um
                     for section_offset_um in np.arange(
                         0.0, section_thickness_um, np.amax(self._voxel_size_um)
                     )
                 ),
             )
-        for sectioning_axis, section_thickness_um in product(
+        for sectioning_axis, section_thickness_um in itertools.product(
             sectioning_axes, section_thicknesses_um
         ):
             pixel_size_um = np.delete(self._voxel_size_um, sectioning_axis)
@@ -167,36 +222,54 @@ class CellMaskSlicer:
                 0.0, section_thickness_um, np.amax(self._voxel_size_um)
             ):
                 num_cell_slices = {}
-                section_gen = self.generate_sections(
+                current_section_offset_um = section_offset_um
+                for (
+                    mask_section,
+                    intensities_section,
+                ) in self.generate_sections(
                     sectioning_axis,
                     section_thickness_um,
                     section_offset_um=section_offset_um,
                     drop_last=drop_last,
-                )
-                current_section_offset_um = section_offset_um
-                for section in section_gen:
-                    for props in regionprops(section):
-                        cell_id = props.label
+                ):
+                    for cell_slice_props in regionprops(
+                        mask_section,
+                        intensity_image=(
+                            np.moveaxis(intensities_section, 1, -1)
+                            if intensities_section is not None
+                            else None
+                        ),
+                    ):
+                        cell_id = cell_slice_props.label
                         cell_slice_number = num_cell_slices.get(cell_id, 0)
-                        cell_slice_volume_um3 = props.area * voxel_volume_um3
+                        cell_slice_volume_um3 = (
+                            cell_slice_props.area * voxel_volume_um3
+                        )
                         cell_slice_centroid_um = list(
-                            props.centroid * self._voxel_size_um
+                            cell_slice_props.centroid * self._voxel_size_um
                         )
                         cell_slice_centroid_um[
                             sectioning_axis
                         ] += current_section_offset_um
-                        proj = np.amax(props.image, axis=sectioning_axis)
-                        proj_props = regionprops(proj.astype(np.uint8))[0]
+                        proj_cell_slice_props = regionprops(
+                            np.amax(
+                                cell_slice_props.image, axis=sectioning_axis
+                            ).astype(np.uint8),
+                            intensity_image=np.sum(
+                                cell_slice_props.image_intensity,
+                                axis=sectioning_axis,
+                            ),
+                        )[0]
                         proj_cell_slice_area_um2 = (
-                            proj_props.area * pixel_area_um2
+                            proj_cell_slice_props.area * pixel_area_um2
                         )
                         proj_cell_slice_centroid_um = list(
-                            proj_props.centroid * pixel_size_um
+                            proj_cell_slice_props.centroid * pixel_size_um
                         )
                         proj_cell_slice_centroid_um.insert(
                             sectioning_axis, float("nan")
                         )
-                        cell_slice_info = CellMaskSlicer.CellSliceInfo(
+                        cell_slice_info = [
                             sectioning_axis,
                             section_thickness_um,
                             section_offset_um,
@@ -210,19 +283,58 @@ class CellMaskSlicer:
                             proj_cell_slice_centroid_um[-1],
                             proj_cell_slice_centroid_um[-2],
                             proj_cell_slice_centroid_um[-3],
-                        )
+                        ]
+                        if self._intensities is not None:
+                            cell_slice_info += (
+                                cell_slice_props.intensity_mean.tolist()
+                            )
+                            cell_slice_info += (
+                                proj_cell_slice_props.intensity_mean.tolist()
+                            )
                         cell_slice_infos.append(cell_slice_info)
                         num_cell_slices[cell_id] = cell_slice_number + 1
                     current_section_offset_um += section_thickness_um
                     if progress:
-                        progress_bar.update()
+                        pbar.update()
         if progress:
-            progress_bar.close()
-        return cell_slice_infos
+            pbar.close()
+        columns = [
+            "sectioning_axis",
+            "section_thickness_um",
+            "section_offset_um",
+            "cell_id",
+            "cell_slice_number",
+            "cell_slice_volume_um3",
+            "cell_slice_centroid_x_um",
+            "cell_slice_centroid_y_um",
+            "cell_slice_centroid_z_um",
+            "proj_cell_slice_area_um2",
+            "proj_cell_slice_centroid_x_um",
+            "proj_cell_slice_centroid_y_um",
+            "proj_cell_slice_centroid_z_um",
+        ]
+        if self._intensities is not None:
+            columns += [
+                f"mean_cell_slice_intensity_{channel_name}"
+                for channel_name in self._channel_names
+            ]
+            columns += [
+                f"mean_proj_cell_slice_intensity_{channel_name}"
+                for channel_name in self._channel_names
+            ]
+        return pd.DataFrame(data=cell_slice_infos, columns=columns, copy=False)
 
     @property
-    def cell_mask(self) -> np.ndarray:
-        return self._cell_mask
+    def mask(self) -> np.ndarray:
+        return self._mask
+
+    @property
+    def intensities(self) -> Optional[np.ndarray]:
+        return self._intensities
+
+    @property
+    def channel_names(self) -> Optional[Sequence[str]]:
+        return self._channel_names
 
     @property
     def voxel_size_um(self) -> Tuple[float, float, float]:
