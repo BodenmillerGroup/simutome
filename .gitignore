@@ -1,6 +1,5 @@
 /.vscode/
 /data/
-/notebooks/*.csv
 /simutome/_version.py
 
 # Byte-compiled / optimized / DLL files

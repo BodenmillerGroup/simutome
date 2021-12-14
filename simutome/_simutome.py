@@ -21,7 +21,7 @@ class Simutome:
         cell_division_probab: float = 0.0,
         cell_division_dist_mean: Optional[float] = None,
         cell_division_dist_std: Optional[float] = None,
-        cell_swap_probab: float = 0.0,
+        cell_swapping_probab: float = 0.0,
         shuffle_cells: bool = True,
         seed=None,
     ) -> None:
@@ -43,8 +43,8 @@ class Simutome:
             raise ValueError("cell_division_dist_mean")
         if cell_division_probab > 0.0 and cell_division_dist_std is None:
             raise ValueError("cell_division_dist_std")
-        if cell_swap_probab < 0.0 or cell_swap_probab > 1.0:
-            raise ValueError("cell_swap_probab")
+        if cell_swapping_probab < 0.0 or cell_swapping_probab > 1.0:
+            raise ValueError("cell_swapping_probab")
         self.image_occlusion = image_occlusion
         self.image_scale = image_scale
         self.image_rotation = image_rotation
@@ -59,7 +59,7 @@ class Simutome:
         self.cell_division_probab = cell_division_probab
         self.cell_division_dist_mean = cell_division_dist_mean
         self.cell_division_dist_std = cell_division_dist_std
-        self.cell_swap_probab = cell_swap_probab
+        self.cell_swapping_probab = cell_swapping_probab
         self.shuffle_cells = shuffle_cells
         self._rng = np.random.default_rng(seed=seed)
 
@@ -110,7 +110,7 @@ class Simutome:
         image_size: Optional[Tuple[int, int]] = None,
         cell_intensities: Optional[np.ndarray] = None,
         cell_clusters: Optional[np.ndarray] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         if cell_coords.ndim != 2 or cell_coords.shape[1] != 2:
             raise ValueError("cell_coords")
         if section_thickness <= 0.0:
@@ -129,7 +129,7 @@ class Simutome:
             or cell_clusters.shape[0] != cell_coords.shape[0]
         ):
             raise ValueError("cell_clusters")
-        orig_cell_indices = np.arange(len(cell_coords))
+        cell_indices = np.arange(len(cell_coords))
         if self.image_occlusion > 0.0:
             if image_size is None:
                 raise ValueError("image_size")
@@ -139,22 +139,24 @@ class Simutome:
                 cell_intensities = cell_intensities[~image_occlusion_mask]
             if cell_clusters is not None:
                 cell_clusters = cell_clusters[~image_occlusion_mask]
-            orig_cell_indices = orig_cell_indices[~image_occlusion_mask]
+            cell_indices = cell_indices[~image_occlusion_mask]
         if self.exclude_cells:
-            cell_exclusion_mask = self._exclude_cells(len(cell_coords))
+            cell_exclusion_mask = self._exclude_cells(
+                len(cell_coords), section_thickness
+            )
             cell_coords = cell_coords[~cell_exclusion_mask]
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[~cell_exclusion_mask]
             if cell_clusters is not None:
                 cell_clusters = cell_clusters[~cell_exclusion_mask]
-            orig_cell_indices = orig_cell_indices[~cell_exclusion_mask]
+            cell_indices = cell_indices[~cell_exclusion_mask]
         if self.displace_cells:
             cell_coords += self._rng.multivariate_normal(
                 np.ones(2) * self.cell_displacement_mean,
                 np.eye(2) * self.cell_displacement_var,
                 size=len(cell_coords),
             )
-        if self.cell_swap_probab > 0.0:
+        if self.cell_swapping_probab > 0.0:
             if cell_intensities is None:
                 raise ValueError("cell_intensities")
             if cell_clusters is None:
@@ -171,7 +173,7 @@ class Simutome:
                 cell_intensities = cell_intensities[cell_division_indices]
             if cell_clusters is not None:
                 cell_clusters = cell_clusters[cell_division_indices]
-            orig_cell_indices = orig_cell_indices[cell_division_indices]
+            cell_indices = cell_indices[cell_division_indices]
         if (
             self.image_scale != (1.0, 1.0)
             or self.image_rotation != 0.0
@@ -188,8 +190,8 @@ class Simutome:
                 cell_intensities = cell_intensities[cell_shuffling_indices]
             if cell_clusters is not None:
                 cell_clusters = cell_clusters[cell_shuffling_indices]
-            orig_cell_indices = orig_cell_indices[cell_shuffling_indices]
-        return cell_coords, cell_intensities, orig_cell_indices
+            cell_indices = cell_indices[cell_shuffling_indices]
+        return cell_indices, cell_coords, cell_intensities
 
     def _occlude_image(
         self,
@@ -225,7 +227,7 @@ class Simutome:
         self, num_cells: int, section_thickness: float, k: float = 1e-12
     ) -> np.ndarray:
         d = self._rng.normal(
-            log=2.0 * self.cell_radius_mean,
+            loc=2.0 * self.cell_radius_mean,
             scale=2.0 * self.cell_radius_std,
             size=num_cells,
         )
@@ -239,7 +241,7 @@ class Simutome:
         self, cell_data: np.ndarray, cell_clusters: np.ndarray
     ) -> np.ndarray:
         ind = np.arange(len(cell_data))
-        n = self._rng.binomial(len(cell_data), self.cell_swap_probab)
+        n = self._rng.binomial(len(cell_data), self.cell_swapping_probab)
         if n == 0:
             return ind
         for i in self._rng.choice(len(cell_data), size=n, replace=False):
@@ -259,13 +261,17 @@ class Simutome:
             scale=self.cell_division_dist_std,
             size=n,
         )
-        deltas = dists * np.column_stack((np.cos(radii), np.sin(radii)))
-        cell_coords = np.concatenate(
-            np.delete(cell_coords, ind),
-            cell_coords[ind] + deltas,
-            cell_coords[ind] - deltas,
+        deltas = dists[:, None] * np.column_stack(
+            (np.cos(radii), np.sin(radii))
         )
         cell_division_indices = np.concatenate(
-            np.delete(np.arange(len(cell_coords)), ind), ind, ind
+            (np.delete(np.arange(len(cell_coords)), ind), ind, ind)
+        )
+        cell_coords = np.concatenate(
+            (
+                np.delete(cell_coords, ind, axis=0),
+                cell_coords[ind] + deltas,
+                cell_coords[ind] - deltas,
+            )
         )
         return cell_coords, cell_division_indices
