@@ -1,6 +1,6 @@
 # simutome
 
-Tool for simulating consecutive multiplexed tissue sections
+Simulate consecutive multiplexed tissue sections
 
 ## Installation
 
