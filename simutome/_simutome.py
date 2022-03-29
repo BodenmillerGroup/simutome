@@ -1,7 +1,7 @@
-import numpy as np
-
-from skimage.transform import AffineTransform
 from typing import Generator, Optional, Tuple
+
+import numpy as np
+from skimage.transform import AffineTransform
 
 
 class Simutome:
@@ -76,9 +76,7 @@ class Simutome:
             raise ValueError("cell_coords")
         if section_thickness <= 0.0:
             raise ValueError("section_thickness")
-        if image_size is not None and (
-            image_size[0] <= 0 or image_size[1] <= 0
-        ):
+        if image_size is not None and (image_size[0] <= 0 or image_size[1] <= 0):
             raise ValueError("image_size")
         if cell_intensities is not None and (
             cell_intensities.ndim != 2
@@ -86,8 +84,7 @@ class Simutome:
         ):
             raise ValueError("cell_intensities")
         if cell_clusters is not None and (
-            cell_clusters.ndim != 1
-            or cell_clusters.shape[0] != cell_coords.shape[0]
+            cell_clusters.ndim != 1 or cell_clusters.shape[0] != cell_coords.shape[0]
         ):
             raise ValueError("cell_clusters")
         if n is not None and n <= 0:
@@ -115,9 +112,7 @@ class Simutome:
             raise ValueError("cell_coords")
         if section_thickness <= 0.0:
             raise ValueError("section_thickness")
-        if image_size is not None and (
-            image_size[0] <= 0 or image_size[1] <= 0
-        ):
+        if image_size is not None and (image_size[0] <= 0 or image_size[1] <= 0):
             raise ValueError("image_size")
         if cell_intensities is not None and (
             cell_intensities.ndim != 2
@@ -125,8 +120,7 @@ class Simutome:
         ):
             raise ValueError("cell_intensities")
         if cell_clusters is not None and (
-            cell_clusters.ndim != 1
-            or cell_clusters.shape[0] != cell_coords.shape[0]
+            cell_clusters.ndim != 1 or cell_clusters.shape[0] != cell_coords.shape[0]
         ):
             raise ValueError("cell_clusters")
         cell_indices = np.arange(len(cell_coords))
@@ -161,14 +155,10 @@ class Simutome:
                 raise ValueError("cell_intensities")
             if cell_clusters is None:
                 raise ValueError("cell_clusters")
-            cell_swapping_indices = self._swap_cells(
-                cell_intensities, cell_clusters
-            )
+            cell_swapping_indices = self._swap_cells(cell_intensities, cell_clusters)
             cell_intensities = cell_intensities[cell_swapping_indices]
         if self.cell_division_probab > 0.0:
-            cell_coords, cell_division_indices = self._divide_cells(
-                cell_coords
-            )
+            cell_coords, cell_division_indices = self._divide_cells(cell_coords)
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[cell_division_indices]
             if cell_clusters is not None:
@@ -212,9 +202,7 @@ class Simutome:
     def _transform_image(
         self, cell_coords: np.ndarray, image_size: Tuple[int, int]
     ) -> np.ndarray:
-        c = AffineTransform(
-            translation=(-image_size[0] / 2.0, -image_size[1] / 2.0)
-        )
+        c = AffineTransform(translation=(-image_size[0] / 2.0, -image_size[1] / 2.0))
         t = AffineTransform(
             scale=self.image_scale,
             rotation=self.image_rotation,
@@ -250,9 +238,7 @@ class Simutome:
             ind[i], ind[j] = ind[j], ind[i]
         return ind
 
-    def _divide_cells(
-        self, cell_coords: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _divide_cells(self, cell_coords: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         n = self._rng.binomial(len(cell_coords), self.cell_division_probab)
         ind = self._rng.integers(len(cell_coords), size=n)
         radii = self._rng.uniform(low=0.0, high=np.pi, size=n)
@@ -261,9 +247,7 @@ class Simutome:
             scale=self.cell_division_dist_std,
             size=n,
         )
-        deltas = dists[:, None] * np.column_stack(
-            (np.cos(radii), np.sin(radii))
-        )
+        deltas = dists[:, None] * np.column_stack((np.cos(radii), np.sin(radii)))
         cell_division_indices = np.concatenate(
             (np.delete(np.arange(len(cell_coords)), ind), ind, ind)
         )

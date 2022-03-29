@@ -1,36 +1,36 @@
 import itertools
+from typing import Generator, Optional, Sequence, Tuple
+
 import numpy as np
 import pandas as pd
-
 from skimage.measure import regionprops
 from tqdm.auto import tqdm
-from typing import Generator, Optional, Sequence, Tuple
 
 
 class CellSlicer:
     def __init__(
         self,
         mask: np.ndarray,
-        intensities: Optional[np.ndarray] = None,
+        image: Optional[np.ndarray] = None,
         channel_names: Optional[Sequence[str]] = None,
         voxel_size_um: Tuple[float, float, float] = (1.0, 1.0, 1.0),
     ) -> None:
         if mask.ndim != 3:
             raise ValueError("mask")
-        if intensities is not None and (
-            intensities.ndim != 4
-            or intensities.shape[0] != mask.shape[0]
-            or intensities.shape[2:] != mask.shape[1:]
+        if image is not None and (
+            image.ndim != 4
+            or image.shape[0] != mask.shape[0]
+            or image.shape[2:] != mask.shape[1:]
         ):
-            raise ValueError("intensities")
-        if intensities is not None and (
-            channel_names is None or len(channel_names) != intensities.shape[1]
+            raise ValueError("image")
+        if image is not None and (
+            channel_names is None or len(channel_names) != image.shape[1]
         ):
             raise ValueError("channel_names")
         if len(voxel_size_um) != 3:
             raise ValueError("voxel_size_um")
         self._mask = mask
-        self._intensities = intensities
+        self._image = image
         self._channel_names = channel_names
         self._voxel_size_um = np.asarray(voxel_size_um)
 
@@ -42,8 +42,7 @@ class CellSlicer:
         drop_last: bool = True,
     ) -> int:
         section_count = (
-            self._mask.shape[sectioning_axis]
-            * self.voxel_size_um[sectioning_axis]
+            self._mask.shape[sectioning_axis] * self.voxel_size_um[sectioning_axis]
             - section_offset_um
         ) / section_thickness_um
         if drop_last:
@@ -68,12 +67,10 @@ class CellSlicer:
         if section_offset_um < 0.0:
             raise ValueError("section_offset_um")
         mask = np.moveaxis(self._mask, sectioning_axis, 0)
-        if self._intensities is not None:
-            intensities = np.moveaxis(
-                self._intensities, sectioning_axis + (sectioning_axis > 0), 0
-            )
+        if self._image is not None:
+            img = np.moveaxis(self._image, sectioning_axis + (sectioning_axis > 0), 0)
         else:
-            intensities = None
+            img = None
         pixel_size_um = self._voxel_size_um[sectioning_axis]
         section_thickness_px = int(round(section_thickness_um / pixel_size_um))
         for section_start_um in np.arange(
@@ -87,15 +84,15 @@ class CellSlicer:
                 mask_section = np.moveaxis(
                     mask[section_start_px:section_stop_px], 0, sectioning_axis
                 )
-                if intensities is not None:
-                    intensities_section = np.moveaxis(
-                        intensities[section_start_px:section_stop_px],
+                if img is not None:
+                    img_section = np.moveaxis(
+                        img[section_start_px:section_stop_px],
                         0,
                         sectioning_axis + (sectioning_axis > 0),
                     )
                 else:
-                    intensities_section = None
-                yield mask_section, intensities_section
+                    img_section = None
+                yield mask_section, img_section
 
     def measure_cells(
         self,
@@ -104,14 +101,12 @@ class CellSlicer:
     ) -> pd.DataFrame:
         if any(a not in (0, 1, 2) for a in sectioning_axes):
             raise ValueError("sectioning_axes")
-        cell_infos = []
+        cell_info_data = []
         voxel_volume_um3 = np.prod(self._voxel_size_um)
         cell_props_list = regionprops(
             self._mask,
             intensity_image=(
-                np.moveaxis(self._intensities, 1, -1)
-                if self._intensities is not None
-                else None
+                np.moveaxis(self._image, 1, -1) if self._image is not None else None
             ),
         )
         if progress:
@@ -122,23 +117,17 @@ class CellSlicer:
             for cell_props in cell_props_list:
                 cell_id = cell_props.label
                 cell_volume_um3 = cell_props.area * voxel_volume_um3
-                cell_centroid_um = cell_props.centroid * np.array(
-                    self._voxel_size_um
-                )
+                cell_centroid_um = cell_props.centroid * np.array(self._voxel_size_um)
                 proj_cell_props = regionprops(
-                    np.amax(cell_props.image, axis=sectioning_axis).astype(
-                        np.uint8
-                    ),
+                    np.amax(cell_props.image, axis=sectioning_axis).astype(np.uint8),
                     intensity_image=np.sum(
                         cell_props.image_intensity, axis=sectioning_axis
                     ),
                 )[0]
                 proj_cell_area_um2 = proj_cell_props.area * pixel_area_um2
-                proj_cell_centroid_um = list(
-                    proj_cell_props.centroid * pixel_size_um
-                )
+                proj_cell_centroid_um = list(proj_cell_props.centroid * pixel_size_um)
                 proj_cell_centroid_um.insert(sectioning_axis, float("nan"))
-                cell_info = [
+                cell_info_row = [
                     sectioning_axis,
                     cell_id,
                     cell_volume_um3,
@@ -150,15 +139,15 @@ class CellSlicer:
                     proj_cell_centroid_um[-2],
                     proj_cell_centroid_um[-3],
                 ]
-                if self._intensities is not None:
-                    cell_info += cell_props.intensity_mean.tolist()
-                    cell_info += proj_cell_props.intensity_mean.tolist()
-                cell_infos.append(cell_info)
+                if self._image is not None:
+                    cell_info_row += cell_props.intensity_mean.tolist()
+                    cell_info_row += proj_cell_props.intensity_mean.tolist()
+                cell_info_data.append(cell_info_row)
                 if progress:
                     pbar.update()
         if progress:
             pbar.close()
-        columns = [
+        cell_info_columns = [
             "sectioning_axis",
             "cell_id",
             "cell_volume_um3",
@@ -170,16 +159,16 @@ class CellSlicer:
             "proj_cell_centroid_y_um",
             "proj_cell_centroid_z_um",
         ]
-        if self._intensities is not None:
-            columns += [
+        if self._image is not None:
+            cell_info_columns += [
                 f"mean_cell_intensity_{channel_name}"
                 for channel_name in self._channel_names
             ]
-            columns += [
+            cell_info_columns += [
                 f"mean_proj_cell_intensity_{channel_name}"
                 for channel_name in self._channel_names
             ]
-        return pd.DataFrame(data=cell_infos, columns=columns, copy=False)
+        return pd.DataFrame(data=cell_info_data, columns=cell_info_columns, copy=False)
 
     def measure_cell_slices(
         self,
@@ -195,7 +184,7 @@ class CellSlicer:
             for t in section_thicknesses_um
         ):
             raise ValueError("section_thicknesses_um")
-        cell_slice_infos = []
+        cell_slice_info_data = []
         voxel_volume_um3 = np.prod(self._voxel_size_um)
         if progress:
             pbar = tqdm(
@@ -223,10 +212,7 @@ class CellSlicer:
             ):
                 num_cell_slices = {}
                 current_section_offset_um = section_offset_um
-                for (
-                    mask_section,
-                    intensities_section,
-                ) in self.generate_sections(
+                for mask_section, img_section in self.generate_sections(
                     sectioning_axis,
                     section_thickness_um,
                     section_offset_um=section_offset_um,
@@ -235,16 +221,14 @@ class CellSlicer:
                     for cell_slice_props in regionprops(
                         mask_section,
                         intensity_image=(
-                            np.moveaxis(intensities_section, 1, -1)
-                            if intensities_section is not None
+                            np.moveaxis(img_section, 1, -1)
+                            if img_section is not None
                             else None
                         ),
                     ):
                         cell_id = cell_slice_props.label
                         cell_slice_number = num_cell_slices.get(cell_id, 0)
-                        cell_slice_volume_um3 = (
-                            cell_slice_props.area * voxel_volume_um3
-                        )
+                        cell_slice_volume_um3 = cell_slice_props.area * voxel_volume_um3
                         cell_slice_centroid_um = list(
                             cell_slice_props.centroid * self._voxel_size_um
                         )
@@ -269,7 +253,7 @@ class CellSlicer:
                         proj_cell_slice_centroid_um.insert(
                             sectioning_axis, float("nan")
                         )
-                        cell_slice_info = [
+                        cell_slice_info_row = [
                             sectioning_axis,
                             section_thickness_um,
                             section_offset_um,
@@ -284,21 +268,21 @@ class CellSlicer:
                             proj_cell_slice_centroid_um[-2],
                             proj_cell_slice_centroid_um[-3],
                         ]
-                        if self._intensities is not None:
-                            cell_slice_info += (
+                        if self._image is not None:
+                            cell_slice_info_row += (
                                 cell_slice_props.intensity_mean.tolist()
                             )
-                            cell_slice_info += (
+                            cell_slice_info_row += (
                                 proj_cell_slice_props.intensity_mean.tolist()
                             )
-                        cell_slice_infos.append(cell_slice_info)
+                        cell_slice_info_data.append(cell_slice_info_row)
                         num_cell_slices[cell_id] = cell_slice_number + 1
                     current_section_offset_um += section_thickness_um
                     if progress:
                         pbar.update()
         if progress:
             pbar.close()
-        columns = [
+        cell_slice_info_columns = [
             "sectioning_axis",
             "section_thickness_um",
             "section_offset_um",
@@ -313,24 +297,26 @@ class CellSlicer:
             "proj_cell_slice_centroid_y_um",
             "proj_cell_slice_centroid_z_um",
         ]
-        if self._intensities is not None:
-            columns += [
+        if self._image is not None:
+            cell_slice_info_columns += [
                 f"mean_cell_slice_intensity_{channel_name}"
                 for channel_name in self._channel_names
             ]
-            columns += [
+            cell_slice_info_columns += [
                 f"mean_proj_cell_slice_intensity_{channel_name}"
                 for channel_name in self._channel_names
             ]
-        return pd.DataFrame(data=cell_slice_infos, columns=columns, copy=False)
+        return pd.DataFrame(
+            data=cell_slice_info_data, columns=cell_slice_info_columns, copy=False
+        )
 
     @property
     def mask(self) -> np.ndarray:
         return self._mask
 
     @property
-    def intensities(self) -> Optional[np.ndarray]:
-        return self._intensities
+    def image(self) -> Optional[np.ndarray]:
+        return self._image
 
     @property
     def channel_names(self) -> Optional[Sequence[str]]:

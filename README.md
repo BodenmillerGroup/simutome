@@ -1,5 +1,12 @@
 # simutome
 
+![Python](https://img.shields.io/pypi/pyversions/simutome)
+![PyPI](https://img.shields.io/pypi/v/simutome)
+![Build](https://img.shields.io/github/workflow/status/BodenmillerGroup/simutome/build_and_deploy)
+![Issues](https://img.shields.io/github/issues/BodenmillerGroup/simutome)
+![Pull requests](https://img.shields.io/github/issues-pr/BodenmillerGroup/simutome)
+![License](https://img.shields.io/github/license/BodenmillerGroup/simutome)
+
 Simulate consecutive multiplexed tissue sections
 
 ## Installation
