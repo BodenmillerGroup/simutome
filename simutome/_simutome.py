@@ -1,6 +1,7 @@
 from typing import Generator, Optional, Tuple
 
 import numpy as np
+from scipy.stats import truncnorm
 from skimage.transform import AffineTransform
 
 
@@ -13,8 +14,8 @@ class Simutome:
         image_shear: float = 0.0,
         image_translation: Tuple[float, float] = (0.0, 0.0),
         exclude_cells: bool = False,
-        cell_radius_mean: Optional[float] = None,
-        cell_radius_std: Optional[float] = None,
+        cell_diameter_mean: Optional[float] = None,
+        cell_diameter_std: Optional[float] = None,
         displace_cells: bool = False,
         cell_displacement_mean: Optional[float] = None,
         cell_displacement_var: Optional[float] = None,
@@ -29,10 +30,10 @@ class Simutome:
             raise ValueError("image_occlusion")
         if image_scale[0] <= 0.0 or image_scale[1] <= 0.0:
             raise ValueError("image_scale")
-        if exclude_cells and cell_radius_mean is None:
-            raise ValueError("cell_radius_mean")
-        if exclude_cells and cell_radius_std is None:
-            raise ValueError("cell_radius_std")
+        if exclude_cells and cell_diameter_mean is None:
+            raise ValueError("cell_diameter_mean")
+        if exclude_cells and cell_diameter_std is None:
+            raise ValueError("cell_diameter_std")
         if displace_cells and cell_displacement_mean is None:
             raise ValueError("cell_displacement_mean")
         if displace_cells and cell_displacement_var is None:
@@ -51,8 +52,8 @@ class Simutome:
         self.image_shear = image_shear
         self.image_translation = image_translation
         self.exclude_cells = exclude_cells
-        self.cell_radius_mean = cell_radius_mean
-        self.cell_radius_std = cell_radius_std
+        self.cell_diameter_mean = cell_diameter_mean
+        self.cell_diameter_std = cell_diameter_std
         self.displace_cells = displace_cells
         self.cell_displacement_mean = cell_displacement_mean
         self.cell_displacement_var = cell_displacement_var
@@ -214,16 +215,16 @@ class Simutome:
     def _exclude_cells(
         self, num_cells: int, section_thickness: float, k: float = 1e-12
     ) -> np.ndarray:
-        d = self._rng.normal(
-            loc=2.0 * self.cell_radius_mean,
-            scale=2.0 * self.cell_radius_std,
+        d = truncnorm.rvs(
+            -self.cell_diameter_mean / self.cell_diameter_std,
+            self.cell_diameter_mean / self.cell_diameter_std,
+            loc=self.cell_diameter_mean,
+            scale=self.cell_diameter_std,
             size=num_cells,
+            random_state=self._rng,
         )
-        s_physical = np.ceil(d / section_thickness)
-        n1 = np.floor((section_thickness - (d % section_thickness)) / k) + 1
-        n2 = np.ceil((d % section_thickness) / k) - 1
-        s_discrete = (n1 * s_physical + n2 * (s_physical + 1)) / (n1 + n2)
-        return self._rng.random(size=num_cells) < 1.0 / s_discrete
+        s = np.ceil(d / section_thickness)
+        return self._rng.random(size=num_cells) < 1.0 / s
 
     def _swap_cells(
         self, cell_data: np.ndarray, cell_clusters: np.ndarray
