@@ -72,7 +72,7 @@ class Simutome:
         cell_intensities: Optional[np.ndarray] = None,
         cell_clusters: Optional[np.ndarray] = None,
         n: Optional[int] = None,
-    ) -> Generator[Tuple[np.ndarray, np.ndarray, np.ndarray], None, None]:
+    ) -> Generator[Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]], None, None]:
         if cell_coords.ndim != 2 or cell_coords.shape[1] != 2:
             raise ValueError("cell_coords")
         if section_thickness <= 0.0:
