@@ -174,9 +174,7 @@ class Simutome:
             or self.image_shear != 0.0
             or self.image_translation != (0.0, 0.0)
         ):
-            if image_size is None:
-                raise ValueError("image_size")
-            cell_points = self._transform_image(cell_points, image_size)
+            cell_points = self._transform_image(cell_points)
         if self.shuffle_cells:
             cell_shuffling_indices = self._rng.permutation(len(cell_points))
             cell_points = cell_points[cell_shuffling_indices]
@@ -203,17 +201,14 @@ class Simutome:
             & (cell_points[:, 1] >= y0 + h)
         )
 
-    def _transform_image(
-        self, cell_points: np.ndarray, image_size: Tuple[int, int]
-    ) -> np.ndarray:
-        c = AffineTransform(translation=(-image_size[0] / 2.0, -image_size[1] / 2.0))
+    def _transform_image(self, cell_points: np.ndarray) -> np.ndarray:
         t = AffineTransform(
             scale=self.image_scale,
             rotation=self.image_rotation,
             shear=self.image_shear,
             translation=self.image_translation,
         )
-        return c.inverse(t(c(cell_points)))
+        return t(cell_points)
 
     def _exclude_cells(self, num_cells: int) -> np.ndarray:
         d = truncnorm.rvs(
