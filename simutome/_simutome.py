@@ -1,4 +1,4 @@
-from typing import Generator, Mapping, Optional, Tuple
+from typing import Generator, Optional, Tuple
 
 import numpy as np
 from scipy.stats import truncnorm
@@ -14,15 +14,12 @@ class Simutome:
         image_shear: float = 0.0,
         image_translation: Tuple[float, float] = (0.0, 0.0),
         exclude_cells: bool = False,
+        section_thickness: Optional[float] = None,
         cell_diameter_mean: Optional[float] = None,
         cell_diameter_std: Optional[float] = None,
         displace_cells: bool = False,
-        cell_displacement_means_by_section_thickness: Optional[
-            Mapping[float, float]
-        ] = None,
-        cell_displacement_vars_by_section_thickness: Optional[
-            Mapping[float, float]
-        ] = None,
+        cell_displacement_mean: Optional[float] = None,
+        cell_displacement_var: Optional[float] = None,
         cell_division_probab: float = 0.0,
         cell_division_dist_mean: Optional[float] = None,
         cell_division_dist_std: Optional[float] = None,
@@ -34,19 +31,29 @@ class Simutome:
             raise ValueError("image_occlusion")
         if image_scale[0] <= 0.0 or image_scale[1] <= 0.0:
             raise ValueError("image_scale")
-        if exclude_cells and cell_diameter_mean is None:
+        if exclude_cells and (section_thickness is None or section_thickness <= 0.0):
+            raise ValueError("section_thickness")
+        if exclude_cells and (cell_diameter_mean is None or cell_diameter_mean <= 0.0):
             raise ValueError("cell_diameter_mean")
-        if exclude_cells and cell_diameter_std is None:
+        if exclude_cells and (cell_diameter_std is None or cell_diameter_std <= 0.0):
             raise ValueError("cell_diameter_std")
-        if displace_cells and cell_displacement_means_by_section_thickness is None:
-            raise ValueError("cell_displacement_means_by_section_thickness")
-        if displace_cells and cell_displacement_vars_by_section_thickness is None:
-            raise ValueError("cell_displacement_vars_by_section_thickness")
+        if displace_cells and (
+            cell_displacement_mean is None or cell_displacement_mean <= 0.0
+        ):
+            raise ValueError("cell_displacement_mean")
+        if displace_cells and (
+            cell_displacement_var is None or cell_displacement_var <= 0.0
+        ):
+            raise ValueError("cell_displacement_var")
         if cell_division_probab < 0.0 or cell_division_probab > 1.0:
             raise ValueError("cell_division_probab")
-        if cell_division_probab > 0.0 and cell_division_dist_mean is None:
+        if cell_division_probab > 0.0 and (
+            cell_division_dist_mean is None or cell_division_dist_mean <= 0.0
+        ):
             raise ValueError("cell_division_dist_mean")
-        if cell_division_probab > 0.0 and cell_division_dist_std is None:
+        if cell_division_probab > 0.0 and (
+            cell_division_dist_std is None or cell_division_dist_std <= 0.0
+        ):
             raise ValueError("cell_division_dist_std")
         if cell_swapping_probab < 0.0 or cell_swapping_probab > 1.0:
             raise ValueError("cell_swapping_probab")
@@ -56,15 +63,12 @@ class Simutome:
         self.image_shear = image_shear
         self.image_translation = image_translation
         self.exclude_cells = exclude_cells
+        self.section_thickness = section_thickness
         self.cell_diameter_mean = cell_diameter_mean
         self.cell_diameter_std = cell_diameter_std
         self.displace_cells = displace_cells
-        self.cell_displacement_means_by_section_thickness = (
-            cell_displacement_means_by_section_thickness
-        )
-        self.cell_displacement_vars_by_section_thickness = (
-            cell_displacement_vars_by_section_thickness
-        )
+        self.cell_displacement_mean = cell_displacement_mean
+        self.cell_displacement_var = cell_displacement_var
         self.cell_division_probab = cell_division_probab
         self.cell_division_dist_mean = cell_division_dist_mean
         self.cell_division_dist_std = cell_division_dist_std
@@ -75,16 +79,13 @@ class Simutome:
     def generate_sections(
         self,
         cell_points: np.ndarray,
-        section_thickness: float,
-        image_size: Optional[Tuple[int, int]] = None,
         cell_intensities: Optional[np.ndarray] = None,
         cell_clusters: Optional[np.ndarray] = None,
+        image_size: Optional[Tuple[int, int]] = None,
         n: Optional[int] = None,
     ) -> Generator[Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]], None, None]:
         if cell_points.ndim != 2 or cell_points.shape[1] != 2:
             raise ValueError("cell_points")
-        if section_thickness <= 0.0:
-            raise ValueError("section_thickness")
         if image_size is not None and (image_size[0] <= 0 or image_size[1] <= 0):
             raise ValueError("image_size")
         if cell_intensities is not None and (
@@ -102,25 +103,21 @@ class Simutome:
         while n is None or i < n:
             yield self.generate_section(
                 cell_points,
-                section_thickness,
-                image_size=image_size,
                 cell_intensities=cell_intensities,
                 cell_clusters=cell_clusters,
+                image_size=image_size,
             )
             i += 1
 
     def generate_section(
         self,
         cell_points: np.ndarray,
-        section_thickness: float,
-        image_size: Optional[Tuple[int, int]] = None,
         cell_intensities: Optional[np.ndarray] = None,
         cell_clusters: Optional[np.ndarray] = None,
+        image_size: Optional[Tuple[int, int]] = None,
     ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         if cell_points.ndim != 2 or cell_points.shape[1] != 2:
             raise ValueError("cell_points")
-        if section_thickness <= 0.0:
-            raise ValueError("section_thickness")
         if image_size is not None and (image_size[0] <= 0 or image_size[1] <= 0):
             raise ValueError("image_size")
         if cell_intensities is not None and (
@@ -144,9 +141,7 @@ class Simutome:
                 cell_clusters = cell_clusters[~image_occlusion_mask]
             cell_indices = cell_indices[~image_occlusion_mask]
         if self.exclude_cells:
-            cell_exclusion_mask = self._exclude_cells(
-                len(cell_points), section_thickness
-            )
+            cell_exclusion_mask = self._exclude_cells(len(cell_points))
             cell_points = cell_points[~cell_exclusion_mask]
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[~cell_exclusion_mask]
@@ -155,10 +150,8 @@ class Simutome:
             cell_indices = cell_indices[~cell_exclusion_mask]
         if self.displace_cells:
             cell_points += self._rng.multivariate_normal(
-                np.ones(2)
-                * self.cell_displacement_means_by_section_thickness[section_thickness],
-                np.eye(2)
-                * self.cell_displacement_vars_by_section_thickness[section_thickness],
+                np.ones(2) * self.cell_displacement_mean,
+                np.eye(2) * self.cell_displacement_var,
                 size=len(cell_points),
             )
         if self.cell_swapping_probab > 0.0:
@@ -222,9 +215,7 @@ class Simutome:
         )
         return c.inverse(t(c(cell_points)))
 
-    def _exclude_cells(
-        self, num_cells: int, section_thickness: float, k: float = 1e-12
-    ) -> np.ndarray:
+    def _exclude_cells(self, num_cells: int) -> np.ndarray:
         d = truncnorm.rvs(
             -self.cell_diameter_mean / self.cell_diameter_std,
             self.cell_diameter_mean / self.cell_diameter_std,
@@ -233,7 +224,7 @@ class Simutome:
             size=num_cells,
             random_state=self._rng,
         )
-        s = np.ceil(d / section_thickness)
+        s = np.ceil(d / self.section_thickness)
         return self._rng.random(size=num_cells) < 1.0 / s
 
     def _swap_cells(
