@@ -1,3 +1,4 @@
+import sys
 from typing import Generator, Optional, Tuple
 
 import numpy as np
@@ -74,7 +75,10 @@ class Simutome:
         self.cell_division_dist_std = cell_division_dist_std
         self.cell_swapping_probab = cell_swapping_probab
         self.shuffle_cells = shuffle_cells
-        self._rng = np.random.default_rng(seed=seed)
+        self._seed_rng = np.random.default_rng(seed=seed)
+
+    def skip_sections(self, n: int) -> None:
+        self._seed_rng.integers(sys.maxsize, size=n)
 
     def generate_sections(
         self,
@@ -129,11 +133,14 @@ class Simutome:
             cell_clusters.ndim != 1 or cell_clusters.shape[0] != cell_points.shape[0]
         ):
             raise ValueError("cell_clusters")
+        section_rng = np.random.default_rng(seed=self._seed_rng.integers(sys.maxsize))
         cell_indices = np.arange(len(cell_points))
         if self.image_occlusion > 0.0:
             if image_size is None:
                 raise ValueError("image_size")
-            image_occlusion_mask = self._occlude_image(cell_points, image_size)
+            image_occlusion_mask = self._occlude_image(
+                cell_points, image_size, section_rng
+            )
             cell_points = cell_points[~image_occlusion_mask]
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[~image_occlusion_mask]
@@ -141,7 +148,7 @@ class Simutome:
                 cell_clusters = cell_clusters[~image_occlusion_mask]
             cell_indices = cell_indices[~image_occlusion_mask]
         if self.exclude_cells:
-            cell_exclusion_mask = self._exclude_cells(len(cell_points))
+            cell_exclusion_mask = self._exclude_cells(len(cell_points), section_rng)
             cell_points = cell_points[~cell_exclusion_mask]
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[~cell_exclusion_mask]
@@ -149,7 +156,7 @@ class Simutome:
                 cell_clusters = cell_clusters[~cell_exclusion_mask]
             cell_indices = cell_indices[~cell_exclusion_mask]
         if self.displace_cells:
-            cell_points += self._rng.multivariate_normal(
+            cell_points += section_rng.multivariate_normal(
                 np.ones(2) * self.cell_displacement_mean,
                 np.eye(2) * self.cell_displacement_var,
                 size=len(cell_points),
@@ -159,10 +166,14 @@ class Simutome:
                 raise ValueError("cell_intensities")
             if cell_clusters is None:
                 raise ValueError("cell_clusters")
-            cell_swapping_indices = self._swap_cells(cell_intensities, cell_clusters)
+            cell_swapping_indices = self._swap_cells(
+                cell_intensities, cell_clusters, section_rng
+            )
             cell_intensities = cell_intensities[cell_swapping_indices]
         if self.cell_division_probab > 0.0:
-            cell_points, cell_division_indices = self._divide_cells(cell_points)
+            cell_points, cell_division_indices = self._divide_cells(
+                cell_points, section_rng
+            )
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[cell_division_indices]
             if cell_clusters is not None:
@@ -176,7 +187,7 @@ class Simutome:
         ):
             cell_points = self._transform_image(cell_points)
         if self.shuffle_cells:
-            cell_shuffling_indices = self._rng.permutation(len(cell_points))
+            cell_shuffling_indices = section_rng.permutation(len(cell_points))
             cell_points = cell_points[cell_shuffling_indices]
             if cell_intensities is not None:
                 cell_intensities = cell_intensities[cell_shuffling_indices]
@@ -189,11 +200,12 @@ class Simutome:
         self,
         cell_points: np.ndarray,
         image_size: Tuple[int, int],
+        section_rng: np.random.Generator,
     ) -> np.array:
         w = int(round(image_size[0] * (1 - self.image_occlusion) ** 0.5))
         h = int(round(image_size[1] * (1 - self.image_occlusion) ** 0.5))
-        x0 = self._rng.integers(image_size[0] - w)
-        y0 = self._rng.integers(image_size[1] - h)
+        x0 = section_rng.integers(image_size[0] - w)
+        y0 = section_rng.integers(image_size[1] - h)
         return (
             (cell_points[:, 0] < x0)
             & (cell_points[:, 0] >= x0 + w)
@@ -210,36 +222,43 @@ class Simutome:
         )
         return t(cell_points)
 
-    def _exclude_cells(self, num_cells: int) -> np.ndarray:
+    def _exclude_cells(
+        self, num_cells: int, section_rng: np.random.Generator
+    ) -> np.ndarray:
         d = truncnorm.rvs(
             -self.cell_diameter_mean / self.cell_diameter_std,
             self.cell_diameter_mean / self.cell_diameter_std,
             loc=self.cell_diameter_mean,
             scale=self.cell_diameter_std,
             size=num_cells,
-            random_state=self._rng,
+            random_state=section_rng,
         )
         s = np.ceil(d / self.section_thickness)
-        return self._rng.random(size=num_cells) < 1.0 / s
+        return section_rng.random(size=num_cells) < 1.0 / s
 
     def _swap_cells(
-        self, cell_data: np.ndarray, cell_clusters: np.ndarray
+        self,
+        cell_data: np.ndarray,
+        cell_clusters: np.ndarray,
+        section_rng: np.random.Generator,
     ) -> np.ndarray:
         ind = np.arange(len(cell_data))
-        n = self._rng.binomial(len(cell_data), self.cell_swapping_probab)
+        n = section_rng.binomial(len(cell_data), self.cell_swapping_probab)
         if n == 0:
             return ind
-        for i in self._rng.choice(len(cell_data), size=n, replace=False):
+        for i in section_rng.choice(len(cell_data), size=n, replace=False):
             m = cell_clusters == cell_clusters[i]
-            j = self._rng.choice(len(cell_data), p=m / np.sum(m))
+            j = section_rng.choice(len(cell_data), p=m / np.sum(m))
             ind[i], ind[j] = ind[j], ind[i]
         return ind
 
-    def _divide_cells(self, cell_points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        n = self._rng.binomial(len(cell_points), self.cell_division_probab)
-        ind = self._rng.integers(len(cell_points), size=n)
-        radii = self._rng.uniform(low=0.0, high=np.pi, size=n)
-        dists = self._rng.normal(
+    def _divide_cells(
+        self, cell_points: np.ndarray, section_rng: np.random.Generator
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        n = section_rng.binomial(len(cell_points), self.cell_division_probab)
+        ind = section_rng.integers(len(cell_points), size=n)
+        radii = section_rng.uniform(low=0.0, high=np.pi, size=n)
+        dists = section_rng.normal(
             loc=self.cell_division_dist_mean,
             scale=self.cell_division_dist_std,
             size=n,
