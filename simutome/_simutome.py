@@ -213,7 +213,7 @@ class Simutome:
                 cell_clusters = cell_clusters[~cell_exclusion_mask]
         if self.displace_cells:
             cell_points += section_rng.multivariate_normal(
-                np.zeros((2, 2)),
+                np.zeros(2),
                 np.eye(2) * self.cell_displacement_var,
                 size=len(cell_points)
             )
@@ -348,7 +348,7 @@ class Simutome:
         if self.displace_cells:
             shared_cell_indices = np.intersect1d(cell_indices1, cell_indices2)
             delta = section_rng.multivariate_normal(
-                np.zeros((2, 2)),
+                np.zeros(2),
                 np.eye(2) * self.cell_displacement_var,
                 size=len(shared_cell_indices)
             )
