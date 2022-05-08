@@ -249,7 +249,7 @@ class CellSlicer:
                         )
                         proj_cell_slice_centroid_um = list(
                             proj_cell_slice_props.centroid * pixel_size_um
-                        )
+                        )  # FIXME add offset of cell_slice_props.image!
                         proj_cell_slice_centroid_um.insert(
                             sectioning_axis, float("nan")
                         )

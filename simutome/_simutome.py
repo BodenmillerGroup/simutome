@@ -23,8 +23,7 @@ class Simutome:
         cell_diameter_mean: Optional[float] = None,
         cell_diameter_std: Optional[float] = None,
         displace_cells: bool = False,
-        cell_displacement_mean: Optional[float] = None,
-        cell_displacement_std: Optional[float] = None,
+        cell_displacement_var: Optional[float] = None,
         cell_division_probab: float = 0.0,
         cell_division_dist_mean: Optional[float] = None,
         cell_division_dist_std: Optional[float] = None,
@@ -44,13 +43,9 @@ class Simutome:
         if exclude_cells and (cell_diameter_std is None or cell_diameter_std <= 0.0):
             raise ValueError("cell_diameter_std")
         if displace_cells and (
-            cell_displacement_mean is None or cell_displacement_mean <= 0.0
+            cell_displacement_var is None or cell_displacement_var <= 0.0
         ):
-            raise ValueError("cell_displacement_mean")
-        if displace_cells and (
-            cell_displacement_std is None or cell_displacement_std <= 0.0
-        ):
-            raise ValueError("cell_displacement_std")
+            raise ValueError("cell_displacement_var")
         if cell_division_probab < 0.0 or cell_division_probab > 1.0:
             raise ValueError("cell_division_probab")
         if cell_division_probab > 0.0 and (
@@ -72,8 +67,7 @@ class Simutome:
         self.cell_diameter_mean = cell_diameter_mean
         self.cell_diameter_std = cell_diameter_std
         self.displace_cells = displace_cells
-        self.cell_displacement_mean = cell_displacement_mean
-        self.cell_displacement_std = cell_displacement_std
+        self.cell_displacement_var = cell_displacement_var
         self.cell_division_probab = cell_division_probab
         self.cell_division_dist_mean = cell_division_dist_mean
         self.cell_division_dist_std = cell_division_dist_std
@@ -218,14 +212,11 @@ class Simutome:
             if cell_clusters is not None:
                 cell_clusters = cell_clusters[~cell_exclusion_mask]
         if self.displace_cells:
-            r = section_rng.normal(
-                loc=self.cell_displacement_mean,
-                scale=self.cell_displacement_std,
-                size=len(cell_points),
+            cell_points += section_rng.multivariate_normal(
+                np.zeros((2, 2)),
+                np.eye(2) * self.cell_displacement_var,
+                size=len(cell_points)
             )
-            alpha = section_rng.uniform(high=2 * np.pi, size=len(cell_points))
-            cell_points[:, 0] += r * np.cos(alpha)  # negative for pi <= alpha < 2 * pi
-            cell_points[:, 1] += r * np.sin(alpha)  # negative for pi <= alpha < 2 * pi
         if self.cell_division_probab > 0.0:
             divided_cell_order, new_cell_points = self._divide_cells(
                 cell_indices, None, cell_points, None, section_rng
@@ -356,18 +347,13 @@ class Simutome:
                 cell_clusters2 = cell_clusters2[~cell_exclusion_mask2]
         if self.displace_cells:
             shared_cell_indices = np.intersect1d(cell_indices1, cell_indices2)
-            r = section_rng.normal(
-                loc=self.cell_displacement_mean,
-                scale=self.cell_displacement_std,
-                size=len(shared_cell_indices),
+            delta = section_rng.multivariate_normal(
+                np.zeros((2, 2)),
+                np.eye(2) * self.cell_displacement_var,
+                size=len(shared_cell_indices)
             )
-            alpha = section_rng.uniform(high=2 * np.pi, size=len(shared_cell_indices))
-            dx = r * np.cos(alpha)  # negative for pi <= alpha < 2 * pi
-            dy = r * np.sin(alpha)  # negative for pi <= alpha < 2 * pi
-            cell_points1[np.isin(cell_indices1, shared_cell_indices), 0] += 0.5 * dx
-            cell_points1[np.isin(cell_indices1, shared_cell_indices), 1] += 0.5 * dy
-            cell_points2[np.isin(cell_indices2, shared_cell_indices), 0] -= 0.5 * dx
-            cell_points2[np.isin(cell_indices2, shared_cell_indices), 1] -= 0.5 * dy
+            cell_points1[np.isin(cell_indices1, shared_cell_indices), :] += 0.5 * delta
+            cell_points2[np.isin(cell_indices2, shared_cell_indices), :] -= 0.5 * delta
         if self.cell_division_probab > 0.0:
             (
                 divided_cell_order1,
