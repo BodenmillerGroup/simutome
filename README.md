@@ -11,7 +11,7 @@ Simulate consecutive multiplexed tissue sections
 Use the package manager [pip](https://pip.pypa.io/en/stable/) to install simutome.
 
 ```bash
-pip install simutome
+pip install git+https://github.com/BodenmillerGroup/simutome.git@v0.1.0
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ Created and maintained by [Jonas Windhager](mailto:jonas.windhager@uzh.ch)
 
 ## Contributing
 
-[Contributing](https://github.com/BodenmillerGroup/napari-imc/blob/main/CONTRIBUTING.md)
+[Contributing](https://github.com/BodenmillerGroup/simutome/blob/main/CONTRIBUTING.md)
 
 ## Changelog
 
