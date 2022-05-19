@@ -218,7 +218,7 @@ class CellSlicer:
                     section_offset_um=section_offset_um,
                     drop_last=drop_last,
                 ):
-                    for cell_slice_props in regionprops(
+                    for cell_slice_region in regionprops(
                         mask_section,
                         intensity_image=(
                             np.moveaxis(img_section, 1, -1)
@@ -226,30 +226,36 @@ class CellSlicer:
                             else None
                         ),
                     ):
-                        cell_id = cell_slice_props.label
+                        cell_id = cell_slice_region.label
                         cell_slice_number = num_cell_slices.get(cell_id, 0)
-                        cell_slice_volume_um3 = cell_slice_props.area * voxel_volume_um3
+                        cell_slice_volume_um3 = (
+                            cell_slice_region.area * voxel_volume_um3
+                        )
                         cell_slice_centroid_um = list(
-                            cell_slice_props.centroid * self._voxel_size_um
+                            cell_slice_region.centroid * self._voxel_size_um
                         )
                         cell_slice_centroid_um[
                             sectioning_axis
                         ] += current_section_offset_um
-                        proj_cell_slice_props = regionprops(
+                        proj_cell_slice_region = regionprops(
                             np.amax(
-                                cell_slice_props.image, axis=sectioning_axis
+                                cell_slice_region.image, axis=sectioning_axis
                             ).astype(np.uint8),
                             intensity_image=np.sum(
-                                cell_slice_props.image_intensity,
+                                cell_slice_region.image_intensity,
                                 axis=sectioning_axis,
                             ),
                         )[0]
                         proj_cell_slice_area_um2 = (
-                            proj_cell_slice_props.area * pixel_area_um2
+                            proj_cell_slice_region.area * pixel_area_um2
                         )
                         proj_cell_slice_centroid_um = list(
-                            proj_cell_slice_props.centroid * pixel_size_um
-                        )  # FIXME add offset of cell_slice_props.image!
+                            (
+                                np.asarray(cell_slice_region.bbox[:2])
+                                + np.asarray(proj_cell_slice_region.centroid)
+                            )
+                            * pixel_size_um
+                        )
                         proj_cell_slice_centroid_um.insert(
                             sectioning_axis, float("nan")
                         )
@@ -270,10 +276,10 @@ class CellSlicer:
                         ]
                         if self._image is not None:
                             cell_slice_info_row += (
-                                cell_slice_props.intensity_mean.tolist()
+                                cell_slice_region.intensity_mean.tolist()
                             )
                             cell_slice_info_row += (
-                                proj_cell_slice_props.intensity_mean.tolist()
+                                proj_cell_slice_region.intensity_mean.tolist()
                             )
                         cell_slice_info_data.append(cell_slice_info_row)
                         num_cell_slices[cell_id] = cell_slice_number + 1

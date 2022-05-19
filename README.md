@@ -19,7 +19,7 @@ pip install simutome
 
 ## Usage
 
-TODO
+The usage of this tool is currently not documented. Please do not hesitate to get in touch in case of questions!
 
 ## Authors
 
